@@ -1,0 +1,925 @@
+% 
+\documentclass[a4paper]{article}
+\usepackage{Sweave}
+\usepackage{float}
+\usepackage{lscape}
+\usepackage{longtable}
+\usepackage{placeins}
+\SweaveOpts{prefix.string=hck_image/HCK_}
+\author{love}
+
+\begin{document}
+
+\title{HCK RNASEQ}
+\author{Chris Love}
+\maketitle
+
+\section{Preprocessing}
+
+\paragraph{Reads were trimmed using Trimmomatic any read/sequence bias
+was checked using FASTQC.}
+
+\paragraph{Alignment was conducted by Tophat 2.0.8 against mm10 (-g 1).}
+
+
+
+<<echo=FALSE>>=
+library(plyr)
+library(org.Mm.eg.db)
+library(KEGG.db)
+library(goseq)
+library(GO.db)
+library(gplots)
+library(ggplot2)
+library(cluster)
+library(RColorBrewer)
+library(edgeR)
+library(xtable)
+library(pathview)
+library(KEGGREST)
+
+options(digits=3)
+options(width=90)
+
+img_dir <- 'hck_image/'
+#combine technical replicates
+dge_dir <- "/home/NGS/rnaseq/hck/hck/"
+source('hck_functions.R',local=TRUE)
+
+# Gene level counts
+outdir <- "/home/NGS/rnaseq/hck/hck/"
+load(file='/home/NGS/rnaseq/hck/hck/exon_sum_mm10/hck_dge_obj.RData')
+gencode_gtf <- "/home/NGS/rnaseq/hck/hck/mm10_gencode_v14_annotation.mod.tr.txt"
+gencode_set <- read.csv(file=gencode_gtf,sep="\t",header=T)
+
+colnames(dge_obj$counts) <- gsub("tophat_","",colnames(dge_obj$counts))
+colnames(dge_obj$counts) <- gsub("_","-",colnames(dge_obj$counts))
+colnames(dge_obj$counts) <- toupper(colnames(dge_obj$counts))
+dge_obj$samples$group <- toupper(dge_obj$samples$group)
+dge_obj <- DGEList( counts=dge_obj$counts ,
+				group = gsub("-\\d+","",dge_obj$samples$group ))
+
+@
+
+\begin{center}
+<<label=tab1,echo=FALSE,results=tex>>=
+		print(xtable(table(dge_obj$samples$group), caption = "Sample Groups", label = "tab:one"
+				), table.placement = "H",	caption.placement = "top")
+@
+\end{center}
+
+ 
+\begin{center}
+<<label=tab1,echo=FALSE,results=tex>>=
+
+print(xtable(matrix(colSums(dge_obj$counts ,na.rm=TRUE)/1e06,ncol=1,nrow=6,byrow=T,
+						dimnames=list(c(colnames(dge_obj$counts)),c('counts/million'))),
+				caption = "Library sizes", label = "tab:one"
+				), table.placement = "H",	caption.placement = "top")
+@
+\end{center}
+
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=0.8\textwidth}
+<<echo=FALSE,fig=TRUE,width=5,height=5>>=
+d <- density(log2(dge_obj$count[,1]))
+plot(d,main="Density of raw reads in genes across all samples",
+		ylab="Density",xlab="log2(read counts)",ylim=c(0,0.2)
+)
+for(i in 2:ncol(dge_obj$count)){
+	d <- density(log2(dge_obj$count[,i]))
+	lines(d,col=c(as.integer(factor(rownames(dge_obj$sample)))[i]))
+}
+legend('topright',rownames(dge_obj$sample),
+		lwd=1,
+		col=c(1:nrow(dge_obj$sample))
+)
+@
+\caption{Raw density distribution of expression by sample (log2 cpm)}
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=0.8\textwidth}
+<<echo=FALSE,fig=TRUE,width=5,height=5>>=
+dge_obj.norm <- calcNormFactors(dge_obj,method="TMM")
+d <- density(cpm(dge_obj.norm$count[,1],log=T))
+plot(d,main="Density of TMM normalised reads in genes",
+		ylab="Density",xlab="log2(read counts)",ylim=c(0,0.2)
+)
+for(i in 2:ncol(dge_obj.norm$count)){
+	d <- density(cpm(dge_obj.norm$count[,i],log=TRUE))
+	lines(d,col=c(as.integer(factor(rownames(dge_obj.norm$sample)))[i]))
+}
+legend('topright',rownames(dge_obj.norm$sample),
+		lwd=1,
+		col=c(1:nrow(dge_obj.norm$sample))
+)
+@
+\caption{TMM normalised density distribution of expression by sample (log2 cpm)}
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+\FloatBarrier
+
+\subsection{Read distribution by gene}
+
+\begin{figure}
+\begin{center}
+\setkeys{Gin}{width=0.7\textwidth}
+%\setkeys{Gin}{}
+<<results=tex,echo=FALSE>>=
+cat("\\includegraphics{", "/home/NGS/rnaseq/hck/hck/meanCoverageNorm_low.png", "}\n\n", sep="")
+@
+\caption{Low coverage genes}
+\label{fig:Low coverage genes}
+\end{center}
+\end{figure}
+
+\begin{figure}
+\begin{center}
+\setkeys{Gin}{width=0.7\textwidth}
+%\setkeys{Gin}{}
+<<results=tex,echo=FALSE>>=
+cat("\\includegraphics{", "/home/NGS/rnaseq/hck/hck/meanCoverageNorm_medium.png", "}\n\n", sep="")
+@
+\caption{Medium coverage genes}
+\label{fig:Medium coverage genes}
+\end{center}
+\end{figure}
+
+\begin{figure}
+\begin{center}
+\setkeys{Gin}{width=0.7\textwidth}
+%\setkeys{Gin}{}
+<<results=tex,echo=FALSE>>=
+cat("\\includegraphics{", "/home/NGS/rnaseq/hck/hck/meanCoverageNorm_high.png", "}\n\n", sep="")
+@
+\caption{High coverage genes}
+\label{fig:High coverage genes}
+\end{center}
+\end{figure}
+
+\FloatBarrier
+
+\subsection{Expression Filter}
+
+\paragraph{Gene must be expressed (>1 cpm) in at least 3 samples} 
+
+<<echo=FALSE>>=
+#dge_obj$samples # contains a summary of your samples
+# scale counts by library sizes and express on a per-million read scale
+# divide by lib size and multiply by 1e06
+m <- sweep(dge_obj$counts, 2, 1e6 / dge_obj$samples$lib.size, `*`)
+
+# gene be represented at a frequency of at least 1 read per million mapped  in >3 samples
+min_count_no <- 3
+ridx <- rowSums(m > 1) >= min_count_no
+#paste('min count no:',min_count_no)
+exp_fil <- table(ridx)
+names(exp_fil) <- c('removed','retained')
+@
+\begin{center}
+<<label=tab1,echo=FALSE,results=tex>>=
+		print(xtable(table(ridx), caption = "Genes filtered out due to low expression", label = "tab:one"
+				), table.placement = "H",	caption.placement = "top")
+@
+\end{center}
+
+<<echo=FALSE>>=
+
+dge_obj.fil <- dge_obj[ridx,]
+
+#
+# summarise annotation of dge filtered
+gencode_subset.fil <- gencode_set[which(gencode_set[,'transcript_id'] %in%  rownames(dge_obj.fil$counts)),]
+#dim(gencode_subset.fil)
+# [1] 354591      2
+
+# estimates relative library sizes for use as offsets
+# in generalized linear model / TMM normalisation
+dge_obj.fil <- calcNormFactors(dge_obj.fil,method="TMM")
+@
+
+\paragraph{Reads are normalised using TMM.}
+
+\FloatBarrier
+
+\subsection{Duplicate samples}
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=0.8\textwidth}
+<<echo=FALSE,fig=TRUE,width=7,height=15>>=
+par(mfrow=c(3,1))
+plot(cpm(dge_obj.fil,log=TRUE)[,c('HCK-1','HCK-2')])
+plot(cpm(dge_obj.fil,log=TRUE)[,c('HCK-1','HCK-3')])
+plot(cpm(dge_obj.fil,log=TRUE)[,c('HCK-2','HCK-3')])
+@
+\caption{Compare HCK biological replicates}
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=0.8\textwidth}
+<<echo=FALSE,fig=TRUE,width=7,height=15>>=
+par(mfrow=c(3,1))
+plot(cpm(dge_obj.fil,log=TRUE)[,c('WT-1','WT-2')])
+plot(cpm(dge_obj.fil,log=TRUE)[,c('WT-1','WT-3')])
+plot(cpm(dge_obj.fil,log=TRUE)[,c('WT-2','WT-3')])
+@
+\caption{Compare WT biological replicates}
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+\FloatBarrier
+
+
+\section{Voom DEG analysis}
+
+\paragraph{DGE using Voom analysis accounts.}
+
+
+\paragraph{Design matrix}
+
+<<echo=FALSE>>=
+dge_obj.fil$samples$group <- factor(dge_obj.fil$samples$group,levels=c("WT","HCK"))
+nf <- calcNormFactors(dge_obj.fil$counts,method="TMM")
+design <- model.matrix(~0+dge_obj.fil$samples$group,data=dge_obj.fil$samples)
+colnames(design) <- c('wt','mut')
+design
+
+dge_obj.fil <- estimateCommonDisp(dge_obj.fil,verbose=TRUE) #overdispersion,biological/sample-sample variability
+bcv <- sqrt(dge_obj.fil$common.dispersion)
+
+@
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=0.8\textwidth}
+<<echo=FALSE,fig=TRUE,width=5,height=5>>=
+y <- voom(dge_obj.fil$counts,design,plot=TRUE,
+		lib.size=colSums(dge_obj.fil$counts)*nf)
+@
+\caption{Voom: mean/variance trend}
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=0.8\textwidth}
+<<echo=FALSE,fig=TRUE,width=5,height=5>>=
+plotMDS(y,labels=gsub("tophat_","",rownames(dge_obj.fil$samples)),col=as.integer(dge_obj.fil$samples$group))
+@
+\caption{MDS plots of expression filtered normalised samples}
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+\newpage
+
+<<echo=FALSE>>=
+fit <- lmFit(y,design)
+contrast <- makeContrasts(mutvwt=mut-wt, levels=design)
+fit2 <- contrasts.fit(fit,contrast)
+fit2 <- eBayes(fit2)
+
+limma_tt <- topTable(fit2,coef=1,adjust="BH",number=Inf,confint=TRUE)
+#summary(results <- decideTests(fit2))
+
+limma_tt.sig <- limma_tt[which(limma_tt$adj.P.Val < 0.05),]
+limma_tt.sig.fil <- limma_tt.sig[which(abs(limma_tt.sig$logFC)> 1),] # filter for fc of 2
+sig_diff_mat <- matrix(c(nrow(limma_tt.sig),nrow(limma_tt.sig.fil)),nrow=2,ncol=1,
+		dimnames=list(c('Signficiantly differential genes','Sig diff >2 FC'),c('No. of genes')))
+
+limma_tt.sig_fc_count <- table((limma_tt.sig.fil$logFC > 0))
+names(limma_tt.sig_fc_count) <- c('down','up')
+
+limma_tt.sig.fil.ann <- annotate_topHits_ucsc(gencode_subset.fil,limma_tt.sig.fil)
+ 
+@
+
+\begin{center}
+<<label=tab1,echo=FALSE,results=tex>>=
+		print(xtable(sig_diff_mat, caption = "DEGs", label = "tab:one"
+				), table.placement = "H",	caption.placement = "top")
+@
+\end{center}
+
+\begin{center}
+<<label=tab1,echo=FALSE,results=tex>>=
+		print(xtable(limma_tt.sig_fc_count, 
+				caption = "Expression direction of signficant differentially expressed & fc > 2", 
+				label = "tab:one"), table.placement = "H",	caption.placement = "top")
+@
+\end{center}
+
+\subsection{DEG plots}
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=0.8\textwidth}
+<<echo=FALSE,fig=TRUE,width=5,height=5>>=
+#volcanoplot(fit2,cex=0.7)
+plot(limma_tt$logFC, -log10(limma_tt$adj.P.Val), main="Volcano plot", 
+		xlab="log2(mut/wt)", ylab="-log10(FDR)", pch=20, cex=0.5)
+points(limma_tt$logFC[which(abs(limma_tt$logFC) > 1)], 
+		-log10(limma_tt$adj.P.Val[which(abs(limma_tt$logFC) > 1)]), pch = 16, cex = 0.7, col = "red")
+abline(v=c(1,-1),col=c('darkgrey','darkgrey'))
+@
+\caption{Volcano plot}
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+<<echo=FALSE>>=	
+limma_tt <- annotate_topHits_ucsc(gencode_subset.fil,limma_tt)
+write.csv(limma_tt,file=paste(outdir,"/",'all_tn_top_table.voom.0.05.bh.table.csv',sep=""))
+example_df <- t(sapply(rownames(limma_tt)[1:10],				
+				function(x) tapply(as.numeric(cpm(dge_obj.fil[x,],log=T)),
+							dge_obj$samples$group,
+							mean
+					))
+)
+
+example_df <- annotate_topHits_ucsc(gencode_subset.fil,example_df)
+
+@
+
+\FloatBarrier
+
+\section{Heatmap}
+
+<<echo=FALSE>>=
+#limma_tt[1:3,]
+# calculate rpkm
+tr_length <- read.table('/home/NGS/rnaseq/hck/hck/exon_sum_mm10/all_gene_counts.table.txt',
+					sep="\t",header=T,row.names=1,check.names=F)
+longest_tr_df <- data.frame(gene=tr_length[,'gene_name'],
+								row.names=rownames(tr_length),
+								length=as.vector(tr_length[,'cds_length']/1e+03))
+sample_cpm <- cpm(dge_obj.fil,normalized.lib.sizes=T,log=T)
+sample_rpkm <- sample_cpm - matrix(rep(log2(longest_tr_df[rownames(sample_cpm),'length']),ncol(sample_cpm)),ncol=ncol(sample_cpm),byrow=F)
+write.csv(sample_rpkm,paste(outdir,'hck_rpkm.log2.table.txt',sep=""))
+sample_rpkm_nolog <- sample_rpkm^2
+#sample_rpkm_nolog <- annotate_topHits_ucsc(gencode_subset.fil,sample_rpkm_nolog)
+#rownames(sample_rpkm_nolog) <- sample_rpkm_nolog[,'gene_name']
+#sample_rpkm_nolog <- sample_rpkm_nolog[,c(8,1:6)]
+#sample_rpkm_nolog[1:3,] 
+write.table(sample_rpkm_nolog,file="hck_rpkm.gct",sep="\t")
+sample_rpkm <- sample_rpkm[rownames(limma_tt.sig.fil),]
+
+
+#
+# Draw heatmaps
+#
+# cluster column and truncate
+log2.rpkm.scaled <- t(scale(t(sample_rpkm)))
+log2_genes.scaled.trunc <- log2.rpkm.scaled
+log2_genes.scaled.trunc[log2_genes.scaled.trunc > 2] <- 2
+log2_genes.scaled.trunc[log2_genes.scaled.trunc < -2] <- -2
+cor.scaled <- cor(log2_genes.scaled.trunc, use = "complete.obs", method = "spearman")
+h.diana.orig <- as.hclust(diana(as.dist(1 - cor.scaled)), diss = TRUE)
+DianaArrays <- as.dendrogram(h.diana.orig)
+
+#cluster row
+rlog2.rpkm.scaled <- t(t(scale(t(sample_rpkm))))
+rlog2_genes.scaled.trunc <- rlog2.rpkm.scaled
+rlog2_genes.scaled.trunc[rlog2_genes.scaled.trunc > 2] <- 2
+rlog2_genes.scaled.trunc[rlog2_genes.scaled.trunc < -2] <- -2
+#row.cor.scaled <- cor(rlog2_genes.scaled.trunc, use = "complete.obs", method = "spearman")
+row.cor.scaled <- cor(rlog2_genes.scaled.trunc, use = "na.or.complete", method = "spearman")
+row.h.diana.orig <- as.hclust(diana(as.dist(1 - row.cor.scaled)), diss = TRUE)
+row.DianaArrays <- as.dendrogram(row.h.diana.orig)
+@
+
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=0.8\textwidth}
+<<echo=FALSE,fig=TRUE,width=5,height=10>>=
+par(mfrow=c(2,1))
+plot(h.diana.orig, cex = 1,main="RPKM diana distance matrix")
+plot(row.h.diana.orig, cex = 1,main="RPKM diana distance matrix")
+@
+\caption{Dendrogram by sample and gene}
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+<<echo=FALSE>>=
+color.map <- function(mol.biol) {
+	if (mol.biol=="WT") 
+		"#FF0000" #red
+	else
+		"#0000FF" #blue
+}	
+
+hm_category <- unlist(lapply(dge_obj.fil$samples$group, color.map))
+hmcol <- colorRampPalette(c("#053061", "#2166AC", "#4393C3", "#92C5DE", "#D1E5F0", "#FDDBC7", "#F4A582", "#D6604D", "#B2182B", "#67001F"))(20)
+@
+ 
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=1.2\textwidth}
+<<echo=FALSE,fig=TRUE,width=10,height=10>>=		
+heatmap.2(as.matrix(sample_rpkm),
+		#col=topo.colors(100),
+		#col=redgreen(75),
+		col=hmcol,
+		distfun = dist,
+		hclustfun = hclust,
+		#ColSideColors=hmcol,
+		Colv=DianaArrays,
+		Rowv=row.DianaArrays,
+		#Rowv=NULL,
+		#dendrogram="both",
+		scale="row",
+		symkey="FALSE",
+		density.info="none",
+		keysize=1,
+		trace="none",
+		cexRow=1,
+		key=TRUE)
+@
+\caption{Heatmap of DEGs}
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+\FloatBarrier
+
+\section{Geneset enrichment analysis}
+
+\paragraph{Split into upregulated and downregulated genes for enrichment
+analysis for gene with log2(2) fc cut off.}
+
+<<echo=FALSE,results=hide>>=
+#
+upreg_cand_genes <- limma_tt.sig.fil.ann$gene_name[which(limma_tt.sig.fil.ann$logFC >  0)]
+downreg_cand_genes <- limma_tt.sig.fil.ann$gene_name[which(limma_tt.sig.fil.ann$logFC <  0)]
+
+#kegga(de, coef = ncol(de), geneid = rownames(de), FDR = 0.05, trend = FALSE, ...)
+#
+# down go
+#
+#genes=as.integer(p.adjust(limma_tt$P.Value[limma_tt$logFC != 0],
+#				method="BH")<.05)
+downreg_genes=as.integer(limma_tt$gene_name %in% downreg_cand_genes)
+table(downreg_genes)
+names(downreg_genes)=limma_tt$gene_name
+downreg_pwf=nullp(downreg_genes,"mm9","geneSymbol")
+
+#enriched terms	
+down_GO.wall=goseq(downreg_pwf,"mm10","geneSymbol")
+#head(GO.wall)
+downreg_enriched.GO=down_GO.wall[p.adjust(down_GO.wall$over_represented_pvalue,
+				method="BH")<.05,]
+#enriched.GO <- cbind(enriched.GO,term=goterms)
+write.table(downreg_enriched.GO,file=paste(outdir,'/goseq_downreg_GO.table.txt',sep=""),sep="\t")
+
+#
+# up go
+#
+#genes=as.integer(p.adjust(limma_tt$P.Value[limma_tt$logFC != 0],
+#				method="BH")<.05)
+upreg_genes=as.integer(limma_tt$gene_name %in% upreg_cand_genes)
+table(upreg_genes)
+names(upreg_genes)=limma_tt$gene_name
+up_pwf=nullp(upreg_genes,"mm9","geneSymbol")
+#enriched terms	
+up_GO.wall=goseq(up_pwf,"mm10","geneSymbol")
+#head(GO.wall)
+upreg_enriched.GO=up_GO.wall[p.adjust(up_GO.wall$over_represented_pvalue,
+				method="BH")<.05,]
+#enriched.GO <- cbind(enriched.GO,term=goterms)
+write.table(upreg_enriched.GO,file=paste(outdir,'/goseq_upreg_GO.table.txt',sep=""),sep="\t")
+
+#
+# KEGG goseq
+#
+keggid2keggname <- as.list(KEGGPATHID2NAME)
+
+# Get the mapping from Entrez 2 KEGG
+eg2kegg=as.list(org.Mm.egPATH)
+# Define a function which gets all unique KEGG IDs
+# associated with a set of Entrez IDs
+grepKEGG=function(id,mapkeys){unique(unlist(mapkeys[id],use.names=FALSE))}
+# Apply this function to every entry in the mapping from
+# ENSEMBL 2 Entrez to combine the two maps
+#kegg=lapply(en2eg,grepKEGG,eg2kegg)
+#save(kegg,file="kegg.RData")
+load("kegg.RData")
+terms <- stack(lapply(keggid2keggname, function(x){unlist(unlist(x))}))
+#get the genes in each category
+allGos <-getgo(limma_tt$gene_name, 'mm9', 'geneSymbol',fetch.cats = c("KEGG")) # so here I pull the GO terms for every gene that is regulated.
+allGos <- stack(allGos[-which(is.na(names(allGos)))])
+#go2genes=goseq:::reversemapping(allGos)
+#go2genes <- stack(go2genes)
+allGos$Term <- with( allGos, terms$value[match(allGos$values, terms$ind)] )
+
+#
+# KEGG up
+up_KEGG=goseq(up_pwf,gene2cat=kegg)
+upreg_enriched.kegg=up_KEGG[p.adjust(up_KEGG$over_represented_pvalue,
+				method="BH")<.05,]
+#dim(enriched.kegg)
+upreg_enriched.kegg$keggID <- paste('hsa',upreg_enriched.kegg[,'category'],sep="")
+#annotate the kegg categories
+upreg_cats <- upreg_enriched.kegg$category
+
+#add the terms
+onlySigCats <- allGos[allGos$values %in% upreg_enriched.kegg$category,]
+onlySigCats$Term <- with( onlySigCats, terms$value[match(onlySigCats$values, terms$ind)] )
+
+# add the gene symbol
+upreg_enriched.kegg <- cbind(upreg_enriched.kegg,kegg_name=unlist(keggid2keggname[upreg_enriched.kegg[,'category']]))
+gene_list <- lapply(upreg_enriched.kegg$keggID,function(x){
+	paste(onlySigCats[which(onlySigCats[,'values'] %in% gsub("hsa","",x)),'ind'],collapse=",")
+})
+upreg_enriched.kegg <- cbind(upreg_enriched.kegg,kegg_genes=unlist(gene_list))
+write.table(upreg_enriched.kegg,file=paste(outdir,'/goseq_upreg_kegg.table.txt',sep=""),sep="\t")
+
+#
+# KEGG down
+down_KEGG=goseq(downreg_pwf,gene2cat=kegg)
+downreg_enriched.kegg=up_KEGG[p.adjust(down_KEGG$over_represented_pvalue,
+				method="BH")<.05,]
+#dim(enriched.kegg)
+downreg_enriched.kegg$keggID <- paste('hsa',downreg_enriched.kegg[,'category'],sep="")
+#annotate the kegg categories
+downreg_cats <- downreg_enriched.kegg$category
+
+#add the terms
+onlySigCats <- allGos[allGos$values %in% downreg_enriched.kegg$category,]
+onlySigCats$Term <- with( onlySigCats, terms$value[match(onlySigCats$values, terms$ind)] )
+
+# add the gene symbol
+downreg_enriched.kegg <- cbind(downreg_enriched.kegg,kegg_name=unlist(keggid2keggname[downreg_enriched.kegg[,'category']]))
+gene_list <- lapply(downreg_enriched.kegg$keggID,function(x){
+			paste(onlySigCats[which(onlySigCats[,'values'] %in% gsub("hsa","",x)),'ind'],collapse=",")
+		})
+downreg_enriched.kegg <- cbind(downreg_enriched.kegg,kegg_genes=unlist(gene_list))
+write.table(downreg_enriched.kegg,file=paste(outdir,'/goseq_upreg_kegg.table.txt',sep=""),sep="\t")
+
+colnames(upreg_enriched.kegg) <- c('cat','over','under','numDEinCat','numInCat','id','name','genes')
+colnames(downreg_enriched.kegg) <- c('cat','over','under','numDEinCat','numInCat','id','name','genes')
+colnames(upreg_enriched.GO) <-c('cat','over','under','numDEinCat','numInCat','term', 'ontology')
+colnames(downreg_enriched.GO) <-c('cat','over','under','numDEinCat','numInCat','term', 'ontology')
+@
+
+\FloatBarrier
+
+\paragraph{Map significant differential genes (with fc cutoff) against enriched kegg pathways}
+
+<<echo=FALSE,results=hide>>=
+#
+# PATHVIEW: visualize pathways
+#
+#listDatabases()
+#org <- keggList("organism")
+#queryables <- c(listDatabases(), org[,1], org[,2])
+
+symbols <- limma_tt.sig.fil.ann$gene_name
+logfc_symbols <- limma_tt.sig.fil.ann[,'logFC']
+names(logfc_symbols) <- symbols
+
+# Get the entrez gene identifiers that are mapped to a gene symbol
+suffix_id <- "hck_deg_pathview"
+lapply(unique(c(upreg_enriched.kegg[,'cat'],upreg_enriched.kegg[,'cat'])),function(keggid){
+pv.ting <- pathview(gene.data = logfc_symbols, 
+					#pathway.id = '05200',#enriched.kegg$category[1],
+					pathway.id = keggid,#enriched.kegg$category[1],
+					species = "mmu", 
+					out.suffix = suffix_id, 
+					kegg.native = T,same.layer = F,
+					gene.idtype= "SYMBOL",
+					sign.pos = logfc_symbols	
+					)
+					file.rename(paste("mmu",keggid,".",suffix_id,".png",sep=""),
+							paste(img_dir,"mmu",keggid,"_",suffix_id,".png",sep=""))
+					
+				})
+@
+
+<<echo=FALSE>>=
+		
+#
+# camera
+#
+infile <- '/home/love/GSEA/gmt/c2.cp.kegg.v4.0.symbols.gmt'
+
+con  <- file(infile, open = "r")
+myRecord <- NULL
+while (length(oneLine <- readLines(con, n = 1, warn = FALSE)) > 0) {
+	myVector <- unlist((strsplit(oneLine, "\t")))
+	myRecord[[myVector[1]]] <- myVector[3:length(myVector)]
+}
+close(con)
+
+de<- decideTests(fit2, p=0.05, adjust="BH",lfc=1)
+
+mut_detags <- rownames(dge_obj.fil)[as.logical(de)]
+
+deg_idx <- which(rownames(dge_obj.fil$counts)%in% mut_detags)
+gene_symbol_annot <- annotate_topHits_ucsc(gencode_subset.fil,dge_obj.fil$counts)
+gene_symbol_annot <- as.character(gene_symbol_annot[,'gene_name'])   
+
+pathway_idx <- which(toupper(gene_symbol_annot) %in% myRecord[['KEGG_PATHWAYS_IN_CANCER']])
+
+#camera(pathway_idx,dge_obj.fil,deg_idx, design)
+
+path_idx_list <- lapply(myRecord,function(rec){
+			#rec <- myRecord[[162]]
+			pathway_idx <- which(toupper(gene_symbol_annot) %in% rec)
+			return(pathway_idx)
+		})
+#corfit <- duplicateCorrelation(y,design,block=dge_obj.fil$samples$group)
+
+# roast() is a self-contained gene set test with the ability to
+# use linear models and weights, allows for gene-wise correlation
+#mr_df <- mroast(y,path_idx_list,design,2,cor=corfit$consensus,nrot=9999)
+mr_df <- mroast(y,index=path_idx_list,design,contrast=contrast,nrot=9999)
+#mr_df <- mroast(dge_obj.fil,path_idx_list,design,2, cor=corfit$consensus,nrot=9999)
+mr_df<- mr_df[order(mr_df$FDR.Mixed),]
+mr_df_sig <- mr_df[which(mr_df[,'FDR.Mixed'] < 0.05),]
+
+write.csv(mr_df_sig,paste(outdir,"mroast_kegg.sig.table.csv",sep=""))
+
+# camera() is a competitive test, but without the usual disadvantage
+# of gene sampling in that it estimates and adjusts for inter-gene correlation.
+camera_df <- camera(y,path_idx_list, design)
+camera_df <- camera_df[order(camera_df[,'PValue']),]
+
+geneset_summary <- matrix(c(nrow(upreg_enriched.GO),nrow(downreg_enriched.GO),
+						nrow(upreg_enriched.kegg),nrow(downreg_enriched.kegg),
+						nrow(camera_df[which(camera_df[,'FDR'] < 0.05),]),0,
+						length(which(mr_df_sig[,'Direction'] =='Up')),length(which(mr_df_sig[,'Direction'] =='Down'))
+						),byrow=T,ncol=2,dimnames=list(
+									c('goseq:GO','goseq:kegg','camera','mroast'),
+									c('Upregulated enriched pathways','Downregulated enriched pathways'))
+						)
+@
+
+
+<<label=tab2,echo=FALSE,results=tex>>=
+gseq_xtable <- xtable(geneset_summary,
+		caption = "GSEA summary",  label = "tab:two")
+#align(data_xtable) <- 'rlp{1cm}p{3cm}ccccc' #rep("r",ncol(data_proc)+1)
+print(gseq_xtable,caption.placement = "top")
+@
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=1\textwidth}
+<<echo=FALSE,fig=TRUE,width=5,height=5>>=
+barcodeplot(limma_tt[,'logFC'],
+		which(myRecord[[rownames(mr_df_sig)[1]]] %in% toupper(limma_tt$gene_name)),
+		which(myRecord[[rownames(mr_df_sig)[2]]] %in% toupper(limma_tt$gene_name)),
+		labels=c("Up in HCK", "Down in HCK"),cex=1)
+legend("top",legend=c(rownames(mr_df_sig)[1],rownames(mr_df_sig)[2]),
+		lty=1,col=c("red","blue"),cex=.7)
+@
+\caption{mroast top two significantly enriched kegg pathways }
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+<<echo=FALSE>>=
+upreg_bar_kegg <- upreg_enriched.kegg[,c('over','numDEinCat','name')]
+upreg_bar_kegg$over <- -log10(upreg_bar_kegg$over)
+
+rownames(upreg_bar_kegg) <- upreg_bar_kegg$name
+upreg_my.data <- t(upreg_bar_kegg[,'over',drop=F])
+#par(las = 1, mar = c(5, 20, 4, 4) + 0.1)
+upreg_my.y.coords <- barplot(upreg_my.data, horiz = T, plot = F)
+upreg_my.x.coords <- as.numeric(upreg_my.data)
+upreg_my.x.offset <- max(upreg_my.x.coords)/100
+@
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=1\textwidth}
+<<echo=FALSE,fig=TRUE,width=7,height=10>>=
+par(las = 1, mar = c(5, 15, 4, 4) + 0.1, cex=1)
+barplot(upreg_my.data, horiz = T, xlim = c(0, max(upreg_my.x.coords)+upreg_my.x.offset + 10 * upreg_my.x.offset),
+		col="indianred",xlab="-log10(P_value)")
+for(i in 1:length(upreg_my.x.coords)){
+	#text(my.x.coords[i] + my.x.offset, my.y.coords[i], my.x.coords[i], adj = c(0, 0.5))
+	#text(0, my.y.coords[i], bar_kegg$count[i], adj = c(0, 0.5),col="grey")
+	text(0, upreg_my.y.coords[i], upreg_bar_kegg$numDEinCat[i], adj = c(0, 0.5),col="black")
+}
+@
+\caption{Goseq upreg KEGG enrichment }
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+<<echo=FALSE>>=
+downreg_bar_kegg <- downreg_enriched.kegg[,c('over','numDEinCat','name')]
+downreg_bar_kegg$over <- -log10(downreg_bar_kegg$over)
+
+rownames(downreg_bar_kegg) <- downreg_bar_kegg$name
+downreg_my.data <- t(downreg_bar_kegg[,'over',drop=F])
+#par(las = 1, mar = c(5, 20, 4, 4) + 0.1)
+downreg_my.y.coords <- barplot(downreg_my.data, horiz = T, plot = F)
+downreg_my.x.coords <- as.numeric(downreg_my.data)
+downreg_my.x.offset <- max(downreg_my.x.coords)/100
+@
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=1\textwidth}
+<<echo=FALSE,fig=TRUE,width=7,height=10>>=
+par(las = 1, mar = c(5, 15, 4, 4) + 0.1, cex=1)
+barplot(downreg_my.data, horiz = T, xlim = c(0, max(downreg_my.x.coords)+downreg_my.x.offset + 10 * downreg_my.x.offset),
+		col="indianred",xlab="-log10(P_value)")
+for(i in 1:length(downreg_my.x.coords)){
+	#text(my.x.coords[i] + my.x.offset, my.y.coords[i], my.x.coords[i], adj = c(0, 0.5))
+	#text(0, my.y.coords[i], bar_kegg$count[i], adj = c(0, 0.5),col="grey")
+	text(0, downreg_my.y.coords[i], downreg_bar_kegg$numDEinCat[i], adj = c(0, 0.5),col="black")
+}
+@
+\caption{Goseq downreg KEGG enrichment }
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+<<echo=FALSE>>=
+go_limit <- 30 # drawing limit in barplot
+upreg_bar_go <- upreg_enriched.GO[1:go_limit,c('over','numDEinCat','term')]
+upreg_bar_go$over <- -log10(upreg_bar_go$over)
+rownames(upreg_bar_go) <- upreg_bar_go$term
+
+upreg_my.go_data <- t(upreg_bar_go[1:go_limit,'over',drop=F])
+#par(las = 1, mar = c(5, 20, 4, 4) + 0.1)
+upreg_my.y.coords <- barplot(upreg_my.go_data, horiz = T, plot = F)
+upreg_my.x.coords <- as.numeric(upreg_my.go_data)
+upreg_my.x.offset <- max(upreg_my.x.coords)/100
+@
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=1\textwidth}
+<<echo=FALSE,fig=TRUE,width=7,height=10>>=
+par(las = 1, mar = c(5, 17, 4, 4) + 0.1,cex=1)
+barplot(upreg_my.go_data, horiz = T, xlim = c(0, max(upreg_my.x.coords)+upreg_my.x.offset + 10 *
+						upreg_my.x.offset),col="steelblue", xlab="-log10(P_value)")
+for(i in 1:length(upreg_my.x.coords)){
+	#text(my.x.coords[i] + my.x.offset, my.y.coords[i], my.x.coords[i], adj = c(0, 0.5))
+	#text(0, my.y.coords[i], bar_kegg$count[i], adj = c(0, 0.5),col="grey")
+	text(0, upreg_my.y.coords[i], upreg_bar_go$numDEinCat[i], adj = c(0, 0.5),col="black")
+}
+@
+\caption{GOseq upreg GO enrichment (top30) }
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+<<echo=FALSE>>=
+downreg_bar_go <- downreg_enriched.GO[1:go_limit,c('over','numDEinCat','term')]
+downreg_bar_go$over <- -log10(downreg_bar_go$over)
+rownames(downreg_bar_go) <- downreg_bar_go$term
+
+downreg_my.go_data <- t(downreg_bar_go[1:go_limit,'over',drop=F])
+#par(las = 1, mar = c(5, 20, 4, 4) + 0.1)
+downreg_my.y.coords <- barplot(downreg_my.go_data, horiz = T, plot = F)
+downreg_my.x.coords <- as.numeric(downreg_my.go_data)
+downreg_my.x.offset <- max(downreg_my.x.coords)/100
+@
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=1\textwidth}
+<<echo=FALSE,fig=TRUE,width=7,height=10>>=
+par(las = 1, mar = c(5, 17, 4, 4) + 0.1,cex=1)
+barplot(downreg_my.go_data, horiz = T, xlim = c(0, max(downreg_my.x.coords)+downreg_my.x.offset + 10 *
+						downreg_my.x.offset),col="steelblue", xlab="-log10(P_value)")
+for(i in 1:length(downreg_my.x.coords)){
+	#text(my.x.coords[i] + my.x.offset, my.y.coords[i], my.x.coords[i], adj = c(0, 0.5))
+	#text(0, my.y.coords[i], bar_kegg$count[i], adj = c(0, 0.5),col="grey")
+	text(0, downreg_my.y.coords[i], downreg_bar_go$numDEinCat[i], adj = c(0, 0.5),col="black")
+}
+@
+\caption{GOseq downreg GO enrichment (top30) }
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+\section{Pathway maps}
+
+\begin{figure}
+\begin{center}
+\setkeys{Gin}{width=1.0\textwidth}
+%\setkeys{Gin}{}
+<<results=tex,echo=FALSE>>=
+cat("\\includegraphics{", paste(img_dir,"mmu",upreg_enriched.kegg[,'cat'][1],"_hck_deg_pathview.png",sep=""), "}\n\n", sep="")
+@
+\caption{upreg enriched kegg Pathway}
+\label{fig:upreg enriched kegg pathway}
+\end{center}
+\end{figure}
+
+\begin{landscape}
+\begin{figure}
+\begin{center}
+\setkeys{Gin}{width=1.5\textwidth}
+%\setkeys{Gin}{}
+<<results=tex,echo=FALSE>>=
+cat("\\includegraphics{", paste(img_dir,"mmu",upreg_enriched.kegg[,'cat'][2],"_hck_deg_pathview.png",sep=""), "}\n\n", sep="")
+@	
+\caption{upreg enriched kegg Pathway}
+\label{fig:upreg enriched kegg pathway}
+\end{center}
+\end{figure}
+\end{landscape}
+
+
+\begin{figure}
+\begin{center}
+\setkeys{Gin}{width=1\textwidth}
+%\setkeys{Gin}{}
+<<results=tex,echo=FALSE>>=
+cat("\\includegraphics{", paste(img_dir,"mmu",downreg_enriched.kegg[,'cat'][1],"_hck_deg_pathview.png",sep=""), "}\n\n", sep="")
+@
+\caption{downreg enriched kegg Pathway}
+\label{fig:enriched kegg pathway}
+\end{center}
+\end{figure}
+
+\begin{landscape}
+\begin{figure}
+\begin{center}
+\setkeys{Gin}{width=1.5\textwidth}
+%\setkeys{Gin}{}
+<<results=tex,echo=FALSE>>=
+cat("\\includegraphics{", paste(img_dir,"mmu",downreg_enriched.kegg[,'cat'][2],"_hck_deg_pathview.png",sep=""), "}\n\n", sep="")
+@
+\caption{downreg enriched kegg Pathway}
+\label{fig: downreg enriched kegg pathway}
+\end{center}
+\end{figure}
+\end{landscape}
+
+\FloatBarrier
+
+\section{Tables}
+
+<<label=tab2,echo=FALSE,results=tex>>=
+rownames(upreg_enriched.kegg) <- upreg_enriched.kegg[,'id']
+data_xtable <- xtable(upreg_enriched.kegg[,-c(1,6,8)], digits=c(0,-2,-2,0,0,0),
+		caption = "KEGG enrichment",  label = "tab:two")
+#align(data_xtable) <- 'rlp{1cm}p{3cm}ccccc' #rep("r",ncol(data_proc)+1)
+align(data_xtable) <- 'rp{2cm}p{2cm}p{2cm}p{2cm}p{3cm}' #rep("r",ncol(data_proc)+1)
+print(data_xtable,caption.placement = "top",
+		tabular.environment="longtable",floating=FALSE)
+@
+
+<<label=tab2,echo=FALSE,results=tex>>=
+rownames(downreg_enriched.kegg) <- downreg_enriched.kegg[,'id']
+data_xtable <- xtable(downreg_enriched.kegg[,-c(1,6,8)], digits=c(0,-2,-2,0,0,0),
+		caption = "KEGG enrichment",  label = "tab:two")
+#align(data_xtable) <- 'rlp{1cm}p{3cm}ccccc' #rep("r",ncol(data_proc)+1)
+align(data_xtable) <- 'rp{2cm}p{2cm}p{2cm}p{2cm}p{3cm}' #rep("r",ncol(data_proc)+1)
+print(data_xtable,caption.placement = "top",
+		tabular.environment="longtable",floating=FALSE)
+@
+
+<<label=tab2,echo=FALSE,results=tex>>=
+rownames(upreg_enriched.GO) <- upreg_enriched.GO[,'cat']
+data_xtable <- xtable(upreg_enriched.GO[,-1], digits=c(0,-2,-2,0,0,0,0),caption = "GO Enrichment",  label = "tab:one")
+#align(data_xtable) <- 'rlp{1cm}p{3cm}ccccc' #rep("r",ncol(data_proc)+1)
+align(data_xtable) <- 'lp{2cm}p{2cm}p{2cm}p{2cm}p{2cm}p{2cm}' #rep("r",ncol(data_proc)+1)
+print(data_xtable, table.placement = "H",	caption.placement = "top",
+		tabular.environment="longtable",floating=FALSE)
+@
+
+<<label=tab2,echo=FALSE,results=tex>>=
+rownames(downreg_enriched.GO) <- downreg_enriched.GO[,'cat']
+data_xtable <- xtable(downreg_enriched.GO[,-1], digits=c(0,-2,-2,0,0,0,0),caption = "GO Enrichment",  label = "tab:one")
+#align(data_xtable) <- 'rlp{1cm}p{3cm}ccccc' #rep("r",ncol(data_proc)+1)
+align(data_xtable) <- 'lp{2cm}p{2cm}p{2cm}p{2cm}p{2cm}p{2cm}' #rep("r",ncol(data_proc)+1)
+print(data_xtable, table.placement = "H",	caption.placement = "top",
+		tabular.environment="longtable",floating=FALSE)
+@
+
+\newPage{}
+
+\section{Session Info}
+
+<<echo=FALSE>>=
+sessionInfo()
+@
+
+\end{document}

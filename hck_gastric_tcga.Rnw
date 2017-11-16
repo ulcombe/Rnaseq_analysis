@@ -1,0 +1,1026 @@
+% 
+\documentclass[a4paper]{article}
+\usepackage{Sweave}
+\usepackage{float}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{lscape}
+\usepackage{placeins}
+\usepackage{relsize,setspace}  % used by latex(describe( ))
+\usepackage{needspace}
+\usepackage{url}               % used in bibliography
+
+\SweaveOpts{prefix.string=tcga_image/tcga_}
+\textwidth 6.75in              % set dimensions before fancyhdr 
+\textheight 9.25in
+\topmargin -.875in
+\oddsidemargin -.125in
+\evensidemargin -.125in
+\title{HCK in Gastric TCGA data}
+\author{Chris love}
+
+\begin{document}
+
+\maketitle
+
+\paragraph{Compare tumour samples high in HCK expression
+with those low in HCK expression}
+
+<<echo=FALSE>>=
+library(xtable)
+library(edgeR)
+library(ggplot2)
+library(plyr)
+library(limma)
+library(affy)
+
+annotate_topHits <- function(annotation_table,tt){
+	tt_annot <- annotation_table[match(rownames(tt),as.character(annotation_table[,'transcript_id'])),]
+	tt <- cbind(tt,tt_annot)
+	return(tt)
+}
+outdir <- '/home/NGS/rnaseq/hck/gastric_hck/'
+
+#clinical_gastric_df <- read.table('/home/NGS/rnaseq/TCGA/gastric/clinical_data.txt',
+#		sep="\t",header=T,check.names=F)
+#followup_gastric_df <- read.table('/home/NGS/rnaseq/TCGA/gastric/clinical_followup_data.txt',
+#		sep="\t",header=T,check.names=F)
+## GA rpkm rnaseqv2
+#gastric_GA.rpkm.df <- read.table('/home/NGS/rnaseq/TCGA/gastric/bcgsc.ca_STAD.IlluminaGA_RNASeq.Level_3.1.3.0/gastric_bcgsc.illuminaGA.rnaseq_rpkm.table.txt',
+#						sep=" ",header=T,check.names=F,row.names=NULL)
+#gastric_GA.rpkm.df <- gastric_GA.rpkm.df[match(unique(gastric_GA.rpkm.df[,1]),gastric_GA.rpkm.df[,1]),]
+#rownames(gastric_GA.rpkm.df) <- gastric_GA.rpkm.df[,1]
+#gastric_GA.rpkm.df <- gastric_GA.rpkm.df[,-c(1)]
+#
+## HiSeq rpkm rnaseqv2
+#gastric_hi.rpkm.df <- read.table('/home/NGS/rnaseq/TCGA/gastric/bcgsc.ca_STAD.IlluminaHiSeq_RNASeq.Level_3.1.2.0/gastric_bcgsc.illuminaHiSeq.rnaseq_rpkm.table.txt',
+#		sep=" ",header=T,check.names=F,row.names=NULL)
+#gastric_hi.rpkm.df <- gastric_hi.rpkm.df[match(unique(gastric_hi.rpkm.df[,1]),gastric_hi.rpkm.df[,1]),]
+#rownames(gastric_hi.rpkm.df) <- gastric_hi.rpkm.df[,1]
+#gastric_hi.rpkm.df <- gastric_hi.rpkm.df[,-c(1)]
+#
+## GA count rnaseqv2
+#gastric_GA.count.df <- read.table('/home/NGS/rnaseq/TCGA/gastric/bcgsc.ca_STAD.IlluminaGA_RNASeq.Level_3.1.3.0/gastric_bcgsc.illuminaGA.rnaseq_counts.table.txt',
+#		sep=" ",header=T,check.names=F,row.names=NULL)
+#gastric_GA.count.df <- gastric_GA.count.df[match(unique(gastric_GA.count.df[,1]),gastric_GA.count.df[,1]),]
+#rownames(gastric_GA.count.df) <- gastric_GA.count.df[,1]
+#gastric_GA.count.df <- gastric_GA.count.df[,-c(1)]
+#
+## HiSeq count rnaseqv2
+#gastric_hi.count.df <- read.table('/home/NGS/rnaseq/TCGA/gastric/bcgsc.ca_STAD.IlluminaHiSeq_RNASeq.Level_3.1.2.0/gastric_bcgsc.illuminaHiSeq.rnaseq_counts.table.txt',
+#		sep=" ",header=T,check.names=F,row.names=NULL)
+#gastric_hi.count.df <- gastric_hi.count.df[match(unique(gastric_hi.count.df[,1]),gastric_hi.count.df[,1]),]
+#rownames(gastric_hi.count.df) <- gastric_hi.count.df[,1]
+#gastric_hi.count.df <- gastric_hi.count.df[,-c(1)]
+#
+#all(rownames(gastric_hi.rpkm.df) == rownames(gastric_GA.rpkm.df))
+#all(rownames(gastric_hi.count.df) == rownames(gastric_GA.count.df))
+#
+#rpkm_exp_df <- cbind(gastric_hi.rpkm.df,
+#				gastric_GA.rpkm.df)
+#count_exp_df <- cbind(gastric_hi.count.df,
+#		gastric_GA.count.df)
+#all(colnames(count_exp_df) == colnames(rpkm_exp_df))
+#
+#patient_ids <- gsub("-\\w+\\w+-\\w+\\w+-\\w+$","",colnames(rpkm_exp_df))
+#sample_type <- rep("N",length(patient_ids))
+#sample_type[grep("01\\w$",patient_ids)] <- 'T'
+#patient_ids <- gsub("-\\w+$","",patient_ids)
+#
+#pData_df <- data.frame(sample_id=colnames(rpkm_exp_df),
+#					patient_id=patient_ids,type=sample_type)
+#
+#clinical_gastric_df <- clinical_gastric_df[which(clinical_gastric_df$bcr_patient_barcode %in% pData_df$patient_id),]			
+#pData_df <- cbind(pData_df,clinical_gastric_df[match(pData_df$patient_id,clinical_gastric_df$bcr_patient_barcode),])
+#followup_gastric_df <- followup_gastric_df[which(followup_gastric_df$bcr_patient_barcode %in% pData_df$patient_id),]			
+#pData_df <- cbind(pData_df,followup_gastric_df[match(pData_df$patient_id,followup_gastric_df$bcr_patient_barcode),])
+#
+#rownames(pData_df) <- pData_df$sample_id
+#pData_df[1:3,'days_to_last_followup']
+#dim(pData_df)
+#
+#tcga_rpkm_phenoData <- new("AnnotatedDataFrame",
+#		data=pData_df[,1:88])
+#
+#tcga_rnaseq_rpkm_eset <- ExpressionSet(assayData=as.matrix(rpkm_exp_df),
+#		phenoData=tcga_rpkm_phenoData,
+#		annotation="rnaseq")
+#save(tcga_rnaseq_rpkm_eset,file="/home/NGS/rnaseq/TCGA/gastric/gastric_tcga_rpkm_eset.RData" )
+#
+#tcga_rnaseq_count_eset <- ExpressionSet(assayData=as.matrix(count_exp_df),
+#		phenoData=tcga_rpkm_phenoData,
+#		annotation="rnaseq")
+#save(tcga_rnaseq_count_eset,file="/home/NGS/rnaseq/TCGA/gastric/gastric_tcga_count_eset.RData" )
+
+load(file="/home/NGS/rnaseq/TCGA/gastric/gastric_tcga_rpkm_eset.RData" )
+#tcga_rnaseq_rpkm_eset
+load(file="/home/NGS/rnaseq/TCGA/gastric/gastric_tcga_count_eset.RData" )
+#tcga_rnaseq_count_eset
+@
+\FloatBarrier
+
+\section{TCGA Stomach Sample summary}
+
+%\begin{center}
+%<<label=tab1,echo=FALSE,results=tex>>=
+%		print(xtable(table(pData(tcga_rnaseq_rpkm_eset)$platform), 
+%						caption = "samples by platform", label = "tab:one"
+%				), table.placement = "H",	caption.placement = "top")
+%@
+%\end{center}
+
+\begin{center}
+<<label=tab1,echo=FALSE,results=tex>>=
+		print(xtable(table(pData(tcga_rnaseq_rpkm_eset)$type), 
+						caption = "samples by tissue", label = "tab:one"
+				), table.placement = "H",	caption.placement = "top")
+@
+\end{center}
+
+\begin{center}
+<<label=tab1,echo=FALSE,results=tex>>=
+type_tab <- table(pData(tcga_rnaseq_rpkm_eset)$anatomic_neoplasm_subdivision)
+names(type_tab)[5] <- 'Not Available' 
+print(xtable(table(pData(tcga_rnaseq_rpkm_eset)$anatomic_neoplasm_subdivision), 
+		caption = "samples by set", label = "tab:one"
+		), table.placement = "H",	caption.placement = "top")
+@
+\end{center}
+
+
+<<echo=FALSE>>=
+#odd looking samples
+#odd_samples <- c("TCGA-A6-2682-01A","TCGA-AA-A004-01A","TCGA-AZ-4323-01A",
+#		"TCGA-CM-4748-01A","TCGA-DC-6155-01A","TCGA-A6-2679-01A")
+#tcga_rnaseq_rpkm_eset <- tcga_rnaseq_rpkm_eset[,-which(pData(tcga_rnaseq_rpkm_eset)$sampleID %in% odd_samples)]
+#tcga_rnaseq_count_eset <- tcga_rnaseq_count_eset[,-which(pData(tcga_rnaseq_count_eset)$sampleID %in% odd_samples)]
+ 
+genes <- c('HCK','STAT3','IL6','IL11','SOCS3')
+#genes <- c('HCK')
+
+hck_df <- log2(exprs(tcga_rnaseq_rpkm_eset[which(featureNames(tcga_rnaseq_rpkm_eset) %in% genes),])+1)
+hck_df <- cbind(t(hck_df),pData(tcga_rnaseq_rpkm_eset))
+hck_df$sample_id <- factor(hck_df$sample_id,levels=hck_df$sample_id[order(hck_df$HCK)]) 
+hck_df$stage <- gsub("\\w$","",hck_df$pathologic_stage)
+hck_df$stage[which(hck_df$stage %in% "[Not Available]")] <- NA
+hck_df$stage <- factor(hck_df$stage,levels=c('Stage I','Stage II','Stage III'))
+hck_df$hck_exp <- t(exprs(tcga_rnaseq_rpkm_eset[which(featureNames(tcga_rnaseq_rpkm_eset) %in% 'HCK'),]))
+
+#lm_eqn <- function(df,g1){
+#	df <- hck_df
+#	eq <- substitute(italic(y) == a + b %.% italic(x)*","~~italic(r)^2~"="~r2, 
+#			list(a = format(coef(m)[1], digits = 2), 
+#					b = format(coef(m)[2], digits = 2), 
+#					r2 = format(summary(m)$r.squared, digits = 3)))
+#	as.character(as.expression(eq));		                 
+#}
+
+pdf("gastric_tcga_hck_correlations_estimate.pdf")
+df <- hck_df
+df <- df[which(df$type == 'T'),]
+label_stat3 <- paste("\" n =",nrow(df),"\\n r =",round(cor.test(df$STAT3,df$HCK)$estimate,4),"\\n",
+		"Pvalue =",cor.test(df$STAT3,df$HCK)$p.value,"\"",sep=" ")
+ggplot(data=hck_df,aes(x=HCK,y=STAT3,col=type)) +
+		geom_point(alpha=.5)+
+		annotate("text", x = 3, y = 13, label = label_stat3,size=3,parse=T)+
+		geom_smooth(method=lm,   # Add linear regression line
+				se=FALSE)+
+		theme_bw()
+###
+
+label_stat3 <- paste("\" n =",nrow(df),"\\n r =",round(cor.test(df$IL6,df$HCK)$estimate,4),"\\n",
+		"Pvalue =",cor.test(df$IL6,df$HCK)$p.value,"\"",sep=" ")
+ggplot(data=hck_df,aes(x=HCK,y=IL6,col=type)) +
+		geom_point(alpha=.5)+
+		annotate("text", x = 3, y = 10, label = label_stat3,size=3,parse=T)+
+		geom_smooth(method=lm,   # Add linear regression line
+				se=FALSE)+
+		theme_bw()
+###
+label_stat3 <- paste("\" n =",nrow(df),"\\\n r =",round(cor.test(df$IL11,df$HCK)$estimate,4),"\\n",
+		"Pvalue =",round(cor.test(df$IL11,df$HCK)$p.value,10),"\"",sep=" ")
+ggplot(data=hck_df,aes(x=HCK,y=IL11,col=type)) +
+		geom_point(alpha=.5)+
+		annotate("text", x = 3, y = 10, label = label_stat3,size=3,parse=T)+
+		geom_smooth(method=lm,   # Add linear regression line
+				se=FALSE)+
+		theme_bw()
+###
+label_socs3 <- paste("\" n =",nrow(df),"\\\n r =",round(cor.test(df$SOCS3,df$HCK)$estimate,4),"\\n",
+		"Pvalue =",round(cor.test(df$SOCS3,df$HCK)$p.value,10),"\"",sep=" ")
+ggplot(data=hck_df,aes(x=HCK,y=SOCS3,col=type)) +
+		geom_point(alpha=.5)+
+		annotate("text", x = 3, y = 13, label = label_socs3,size=3,parse=T)+
+		geom_smooth(method=lm,   # Add linear regression line
+				se=FALSE)+
+		theme_bw()
+dev.off()
+@
+
+%\begin{center}
+%<<label=tab1,echo=FALSE,results=tex>>=
+%		print(xtable(data.frame(samples=odd_samples), 
+%				caption = "Poor quality samples removed ", label = "tab:one"
+%				), table.placement = "H",	caption.placement = "top")
+%@
+%\end{center}
+
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=0.8\textwidth}
+<<echo=FALSE,fig=TRUE,width=5,height=5>>=
+ggplot(data=df,aes(x=sample_id,y=hck_exp,col=anatomic_neoplasm_subdivision)) +
+		geom_point() +
+		theme(axis.text.x = element_blank())
+@
+\caption{Expression profile of HCK across all TCGA samples}
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=1\textwidth}
+<<echo=FALSE,fig=TRUE,width=5,height=5>>=
+ggplot(data=hck_df,aes(x=type,y=hck_exp)) +
+		geom_jitter(aes(col=type)) +
+		geom_boxplot(alpha=.3,aes(col=type))
+@
+\caption{Expression profile by TissueType against HCK expression}
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=1\textwidth}
+<<echo=FALSE,fig=TRUE,width=5,height=5>>=
+ggplot(data=df,aes(y=hck_exp,x=stage,col=stage)) +
+		geom_jitter(alpha=.5) +
+		geom_boxplot(alpha=.5) +
+		theme_bw()
+@
+\caption{Expression profile by Stage against HCK expression}
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+\FloatBarrier
+
+\section{Differential expression analysis}
+
+\paragraph{Separate samples into high and low based on splitting around the median expression value (log2) 7.76}
+
+<<echo=FALSE>>=
+
+hck_df$exp_class <- factor(NA,levels=c('High','Low')) 
+hck_df <- hck_df[which(hck_df$type == 'T'),] # Tumour samples only
+hck_df[which(hck_df$HCK >= median(hck_df$HCK)),'exp_class'] <- 'High'
+hck_df[which(hck_df$HCK < median(hck_df$HCK)),'exp_class'] <- 'Low'
+
+tcga_rnaseq_count <- exprs(tcga_rnaseq_count_eset)
+mode(tcga_rnaseq_count) <- 'integer'
+tcga_rnaseq_count <- tcga_rnaseq_count[,as.character(hck_df$sample_id)] 
+
+#all(colnames(tcga_rnaseq_count) == hck_df$sampleID)
+dge_obj <- DGEList(counts=tcga_rnaseq_count,
+				group=hck_df$exp_class)
+
+write.csv(dge_obj$samples,file=paste(outdir,"tcga_samples.table.csv",sep=""))
+@
+
+<<results=tex,echo=FALSE>>=
+cat("\\paragraph{", paste("Number of genes being measured:",nrow( dge_obj$counts)), "}\n\n", sep="")
+@
+
+<<echo=FALSE>>=
+read_sum=data.frame(counts=colSums(dge_obj$counts ,na.rm=TRUE), # Library Sizes
+					norm_counts=colSums( dge_obj$counts, na.rm=TRUE) / 1e06 )# Library Sizes in millions of reads
+read_sum_dist <- as.matrix(summary(read_sum))
+colnames(read_sum_dist) <- c('Reads/sample','normalised_read counts/sample')
+#table( rowSums( dge_obj$counts,  na.rm=TRUE) )[ 1:30 ] # Number of genes with low counts
+@
+
+
+\begin{center}
+<<label=tab1,echo=FALSE,results=tex>>=
+		print(xtable(table(dge_obj$samples$group), caption = "Groups", label = "tab:one"
+				), table.placement = "H",	caption.placement = "top")
+@
+\end{center}
+
+
+\begin{center}
+<<label=tab1,echo=FALSE,results=tex>>=
+		print(xtable(read_sum_dist, caption = "sample read counts", label = "tab:one"
+				), table.placement = "H",	caption.placement = "top",
+				tabular.environment='longtable',
+				floating=FALSE)
+@
+\end{center}
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=0.8\textwidth}
+<<echo=FALSE,fig=TRUE,  width=7, height=7,>>=
+#<<echo=FALSE,fig=TRUE, out.width='1\\linewidth', fig.width=1, fig.height=20>>=
+#
+# Histograms
+#
+#par(mfrow=c(4,1),mar=c(5,4,2,2)+0.1)
+par(mfrow=c(2,1),mar=c(4, 4, 1, .5))
+for(group in levels(dge_obj$sample$group)){
+	#group <- levels(dge_obj$sample$group)[2]
+	samples <- rownames(dge_obj$sample)[which(dge_obj$sample$group %in% group)]
+
+	#samples_idx <- list(sample_idx_1215,sample_idx_1899,sample_idx_2537)[1]
+	sample_count <- dge_obj$count[,samples,drop=F]
+	#print(colnames(sample_count))
+	d <- density(log2(sample_count[,1]))
+	
+	plot(d,main=paste("Read density:",group),
+			ylab="Density",xlab="log2(read counts)",ylim=c(0,0.2)
+	)
+	#colnames(sample_count)[9]
+	for(i in 2:ncol(sample_count)){
+		#print(i)
+		d <- density(log2(sample_count[,i]))
+		lines(d,col=c(as.integer(factor(colnames(sample_count)))[i]))
+	}
+#	legend('topright',levels(factor(colnames(sample_count))),
+#			lwd=1,
+#			col=c(as.integer(factor(colnames(sample_count))),
+#			cex = 0.03)
+#	)
+}
+@
+\caption{Raw density distribution of expression by sample (log2 cpm)}
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+
+
+
+%\begin{figure}[H]
+%\begin{center}
+%\setkeys{Gin}{width=1.3\textwidth}
+%<<echo=FALSE,fig=TRUE,width=10,height=10>>=
+%groups <- dge_obj$samples$group
+%plotMDS(dge_obj,labels=groups,col=as.integer(groups))
+%#plotMDS(dge_obj,labels=rownames(dge_obj$samples),col=as.integer(groups),xlim=c(-10,10),ylim=c(-10,10))
+%@
+%\caption{MDS raw values}
+%\label{fig:lm}
+%\end{center}
+%\end{figure}
+
+
+\paragraph{ scale counts by library sizes and express on a per-million read scale
+ divide by lib size and multiply by 1e06}
+
+\paragraph{ Expression filter cpm by log2(m) > 4 in at least 10 samples and
+variance filter of IQR > 0.5}
+
+<<echo=FALSE,results=tex>>=
+# scale counts by library sizes and express on a per-million read scale
+# divide by lib size and multiply by 1e06
+m <- sweep(dge_obj$counts, 2, 1e6 / dge_obj$samples$lib.size, `*`)
+#m[1:3,]
+# gene be represented at a frequency of at least 1 read per million mapped  in >2 samples
+min_count_no <- 10
+#plot(density(log2(m)))
+ridx <- rowSums(log2(m) > 4) >= min_count_no
+#plot(density(log2(m[ridx])))
+igr_filter <- which(apply(log2(m[ridx,]+1),1,IQR) > 0.5)
+#length(igr_filter)
+#plot(apply(log2(m[ridx,]+1),1,IQR),apply(log2(m[ridx,]+1),1,median))
+#X11();plot(density(IQR(log2(m[ridx]+1))))
+
+exp_fil <- matrix(c(table(ridx)[2],length(igr_filter)),dimnames=list(c("expression filter","IQR filter"),c("count"))) # number filtered / retained
+# FALSE  TRUE 
+# 22971 17812 
+
+#print(paste('min count no:',min_count_no))
+
+dge_obj.fil <- dge_obj[match(names(igr_filter),rownames(dge_obj$count)),]
+#dim(dge_obj.fil)
+
+#
+# summarise annotation of dge filtered
+# estimates relative library sizes for use as offsets
+# in generalized linear model / TMM normalisation
+dge_obj.fil <- calcNormFactors(dge_obj.fil,method="TMM")
+
+@
+
+
+\begin{center}
+<<label=tab1,echo=FALSE,results=tex>>=
+		print(xtable(exp_fil, caption = "Expression filter", label = "tab:one"
+				), table.placement = "H",	caption.placement = "top")
+@
+\end{center}
+
+
+%\begin{figure}[H]
+%\begin{center}
+%\setkeys{Gin}{width=1.3\textwidth}
+%<<echo=FALSE,fig=TRUE,width=10,height=10>>=
+%groups <- dge_obj.fil$samples$cellline
+%#plotMDS(dge_obj.fil,labels=groups,main="Exp filtered")
+%plotMDS(dge_obj.fil,labels=rownames(dge_obj.fil$samples),col=as.integer(factor(dge_obj.fil$samples$group))+1,
+%		main="Exp filtered",
+%		xlim=c(-8,8))
+%legend("topright",legend= levels(factor(dge_obj.fil$samples$group)),col=c(2,3),
+%		pch=1)
+%@
+%\caption{MDS expression filtered}
+%\label{fig:lm}
+%\end{center}
+%\end{figure}
+
+\FloatBarrier
+
+\section{Voom DEG analysis}
+
+\paragraph{DGE on tumour samples only using Voom analysis.}
+
+\paragraph{Conduct differential analysis on high HCK expression v low
+HCK expression (contrast: high - low)}
+
+
+\subsection{Design matrix}
+
+<<echo=TRUE>>=
+nf <- calcNormFactors(dge_obj.fil$counts,method="TMM")
+dge_obj.fil <- estimateCommonDisp(dge_obj.fil,verbose=TRUE) #overdispersion,biological/sample-sample variability
+dge_obj.fil <- estimateTagwiseDisp(dge_obj.fil,verbose=TRUE)
+bcv <- sqrt(dge_obj.fil$common.dispersion)
+paste("biological coefficient of variation:",round(bcv,3))
+#plotBCV(dge_obj.fil,cex=1)
+group <- dge_obj.fil$samples$group
+design <- model.matrix(~0+group)
+colnames(design) <- levels(group)
+y <- voom(dge_obj.fil$counts,design,plot=TRUE,
+		lib.size=colSums(dge_obj.fil$counts)*nf)
+#corfit <- duplicateCorrelation(y, design, block = cl)
+fit <- lmFit(y, design)
+cont_matrix <- makeContrasts(HighvLow = High - Low,
+		levels=design)
+fit2 <- contrasts.fit(fit, cont_matrix)
+fit2 <- eBayes(fit2)
+results <- decideTests(fit2,adjust.method="BH",p.value=0.05,lfc=1)
+
+@
+
+
+<<echo=FALSE>>=
+limma_all_tt <- topTable(fit2,adjust="BH",number=Inf,confint=TRUE)
+limma_tt <- topTable(fit2,adjust="BH",number=Inf,confint=TRUE,p.value=0.05)
+#limma_tt <- topTable(fit2,adjust="BH",number=Inf,confint=TRUE,lfc=1,p.value=0.05)
+#dim(limma_tt)
+
+up5 <- rownames(limma_tt)[which(limma_tt$logFC > 0)[1:5]]
+down5 <- rownames(limma_tt)[which(limma_tt$logFC < 0)[1:5]]
+example_df <- t(sapply(c(up5[1:3],down5[1:3]),
+				function(x) tapply(as.numeric(cpm(dge_obj.fil[x,],log=T)),
+							dge_obj.fil$samples$group,
+							mean
+					))
+)
+library(reshape)
+diff_cpm <- melt(cpm(dge_obj.fil[rownames(example_df),],log=TRUE))
+colnames(diff_cpm) <- c('gene','sample','log2_cpm')
+diff_cpm <- cbind(diff_cpm,dge_obj.fil$samples[match(diff_cpm$sample,rownames(dge_obj.fil$samples)),])
+#diff_cpm <- cbind(diff_cpm,as.data.frame(matrix(unlist(strsplit(as.character(diff_cpm$group),"\\-")),byrow=T,ncol=2)))
+@
+
+<<echo=FALSE,results=tex>>=
+options(digits=3)
+limma_tt.sig <- limma_tt[which(limma_tt$adj.P.Val < 0.05),]
+limma_tt.sig.fil <- limma_tt.sig[which(abs(limma_tt.sig$logFC)> 1),] # filter for fc of 2
+#dim(limma_tt.sig.fil)
+sig_diff_mat <- matrix(c(nrow(limma_tt.sig),nrow(limma_tt.sig.fil)),nrow=2,ncol=1,
+		dimnames=list(c('Signficiantly differential genes','Sig diff >2 FC'),c('No. of genes')))
+
+limma_tt.sig_fc_count<- matrix(table((limma_tt.sig.fil$logFC > 0)),nrow=2,ncol=1,
+		dimnames=list(c('downreg in high HCK samples','upreg in high HCK samples'),c('No. of genes')))
+write.csv(limma_tt.sig.fil,file=paste(outdir,"HCK_random_effect.high-low.all.limma.txt",sep=""))
+
+@
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=0.8\textwidth}
+<<echo=FALSE,fig=TRUE,width=5,height=5>>=
+ggplot(diff_cpm,aes(x=group,y=log2_cpm,fill=gene)) +
+		#geom_point(aes(colour=gene)) +
+		geom_boxplot(alpha=.1,aes(fill=gene)) +
+		facet_grid(gene ~ .,scales="free") +
+		theme(axis.text.x  = element_text(angle=90, vjust=0.5))
+@
+\caption{Top 5 significantly differential genes abs(logfc) > 1)}
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+\begin{center}
+<<label=tab1,echo=FALSE,results=tex>>=
+	print(xtable(sig_diff_mat, caption = "DEGs", label = "tab:one"
+				), table.placement = "H",	caption.placement = "top")
+@
+\end{center}
+
+\paragraph{Direction of expression}
+
+\begin{center}
+<<label=tab1,echo=FALSE,results=tex>>=
+	print(xtable(limma_tt.sig_fc_count, caption = "Expression direction of signficant differentially expressed and fc > 2", 
+				label = "tab:one"), table.placement = "H",	caption.placement = "top")
+@
+\end{center}
+
+\FloatBarrier
+
+\section{Heatmap}
+
+\paragraph{Heatmap of significant differential genes with log fold change 1 cut off.}
+
+<<echo=FALSE>>=
+# calculate rpkm
+library(goseq)
+library(GO.db)
+library(gplots)
+library(ggplot2)
+library(cluster)
+library(RColorBrewer)
+library(org.Hs.eg.db)
+library(KEGG.db)
+library(VennDiagram)
+
+genes=as.integer(p.adjust(limma_all_tt$P.Value[limma_all_tt$logFC!=0],
+				method="BH")<.05)
+names(genes)=rownames(limma_all_tt)[limma_all_tt$logFC!=0]
+
+pwf=nullp(genes,"hg19","geneSymbol")
+longest_tr_df<- pwf[,c('bias.data')]/1e+03
+names(longest_tr_df) <- rownames(pwf)
+
+sample_cpm <- cpm(dge_obj.fil,normalized.lib.sizes=T,log=T)
+sample_rpkm <- sample_cpm - matrix(rep(log2(longest_tr_df[rownames(sample_cpm)]),ncol(sample_cpm)),ncol=ncol(sample_cpm),byrow=F)
+sample_rpkm <- sample_rpkm[rownames(limma_tt.sig.fil),]
+sample_rpkm <- sample_rpkm[-which(is.na(sample_rpkm[,1])),] # gene length not found
+
+color.map <- function(mol.biol) {
+	if (mol.biol=="WT") 
+		"#FF0000" #red
+	else
+		"#0000FF" #blue
+}	
+
+# cluster column and truncate
+log2.rpkm.scaled <- t(scale(t(sample_rpkm)))
+log2_genes.scaled.trunc <- log2.rpkm.scaled
+log2_genes.scaled.trunc[log2_genes.scaled.trunc > 2] <- 2
+log2_genes.scaled.trunc[log2_genes.scaled.trunc < -2] <- -2
+cor.scaled <- cor(log2_genes.scaled.trunc, use = "complete.obs", method = "spearman")
+h.diana.orig <- as.hclust(diana(as.dist(1 - cor.scaled)), diss = TRUE)
+DianaArrays <- as.dendrogram(h.diana.orig)
+
+#cluster row
+rlog2.rpkm.scaled <- t(t(scale(t(sample_rpkm))))
+rlog2_genes.scaled.trunc <- rlog2.rpkm.scaled
+rlog2_genes.scaled.trunc[rlog2_genes.scaled.trunc > 2] <- 2
+rlog2_genes.scaled.trunc[rlog2_genes.scaled.trunc < -2] <- -2
+#row.cor.scaled <- cor(rlog2_genes.scaled.trunc, use = "complete.obs", method = "spearman")
+row.cor.scaled <- cor(rlog2_genes.scaled.trunc, use = "na.or.complete", method = "spearman")
+row.h.diana.orig <- as.hclust(diana(as.dist(1 - row.cor.scaled)), diss = TRUE)
+row.DianaArrays <- as.dendrogram(row.h.diana.orig)
+
+hm_category <- unlist(lapply(dge_obj.fil$samples$group, color.map))
+hmcol <- colorRampPalette(c("#053061", "#2166AC", "#4393C3", "#92C5DE", "#D1E5F0", "#FDDBC7", "#F4A582", "#D6604D", "#B2182B", "#67001F"))(20)
+
+cl_heatmap_file <- 'clustered_heatmap.pdf'
+pdf(cl_heatmap_file ,width=15,height=20)
+heatmap.2(as.matrix(sample_rpkm),
+		#col=topo.colors(100),
+		#col=redgreen(75),
+		col=hmcol,
+		distfun = dist,
+		hclustfun = hclust,
+		#ColSideColors=hmcol,
+		Colv=DianaArrays,
+		Rowv=row.DianaArrays,
+		#Rowv=NULL,
+		#dendrogram="both",
+		scale="row",
+		symkey="FALSE",
+		density.info="none",
+		keysize=1,
+		trace="none",
+		cexRow=1,
+		margins=c(8,8),
+		key=TRUE)
+dummy_out <- dev.off()
+@
+
+\begin{figure}
+\setkeys{Gin}{width=1.0\textwidth}
+<<results=tex,echo=FALSE>>=
+cat("\\includegraphics{", cl_heatmap_file , "}\n\n", sep="")
+@
+\caption{Clustered heatmap of DEGS}
+\end{figure}
+
+\FloatBarrier
+
+\section{Geneset enrichment}
+
+\paragraph{Geneset enrichment of significantly differential genes with fc cut
+off and split into upregulated and downregulated.}
+
+<<goseq,echo=FALSE,results=hide>>=
+#
+upreg_cand_genes <- rownames(limma_tt.sig.fil)[which(limma_tt.sig.fil$logFC >  0)]
+downreg_cand_genes <- rownames(limma_tt.sig.fil)[which(limma_tt.sig.fil$logFC <  0)]
+
+genes=as.integer(p.adjust(limma_all_tt$P.Value[limma_all_tt$logFC!=0],
+				method="BH")<.05)
+names(genes)=rownames(limma_all_tt)[limma_all_tt$logFC!=0]
+
+#
+# down go
+#
+downreg_genes=as.integer(rownames(limma_tt) %in% downreg_cand_genes)
+table(downreg_genes)
+names(downreg_genes)= rownames(limma_tt)
+downreg_pwf=nullp(downreg_genes,"hg19","geneSymbol")
+
+#enriched terms	
+down_GO.wall=goseq(downreg_pwf,"hg19","geneSymbol")
+#head(GO.wall)
+downreg_enriched.GO=down_GO.wall[p.adjust(down_GO.wall$over_represented_pvalue,
+				method="BH")<.05,]
+#enriched.GO <- cbind(enriched.GO,term=goterms)
+write.table(downreg_enriched.GO,file=paste(outdir,'/goseq_downreg_GO.table.txt',sep=""),sep="\t")
+
+#
+# up go
+#
+upreg_genes=as.integer(rownames(limma_tt)%in% upreg_cand_genes)
+table(upreg_genes)
+names(upreg_genes)=rownames(limma_tt)
+up_pwf=nullp(upreg_genes,"hg19","geneSymbol")
+#enriched terms	
+up_GO.wall=goseq(up_pwf,"hg19","geneSymbol")
+#head(GO.wall)
+upreg_enriched.GO=up_GO.wall[p.adjust(up_GO.wall$over_represented_pvalue,
+				method="BH")<.05,]
+#enriched.GO <- cbind(enriched.GO,term=goterms)
+write.table(upreg_enriched.GO,file=paste(outdir,'/goseq_upreg_GO.table.txt',sep=""),sep="\t")
+@
+
+<<results=tex,echo=FALSE>>=
+cat("\\paragraph{", paste("Number upregulated enriched in GO:", nrow(upreg_enriched.GO)), "}\n\n", sep="")
+cat("\\paragraph{", paste("Number downregulated enriched in GO:", nrow(downreg_enriched.GO)), "}\n\n", sep="")
+@
+
+
+<<kegg,echo=FALSE,results=hide>>=
+keggid2keggname <- as.list(KEGGPATHID2NAME)
+en2eg=as.list(org.Hs.egSYMBOL2EG)
+# Get the mapping from Entrez 2 KEGG
+eg2kegg=as.list(org.Hs.egPATH)
+# Define a function which gets all unique KEGG IDs
+# associated with a set of Entrez IDs
+grepKEGG=function(id,mapkeys){unique(unlist(mapkeys[id],use.names=FALSE))}
+terms <- stack(lapply(keggid2keggname, function(x){unlist(unlist(x))}))
+# Apply this function to every entry in the mapping from
+# ENSEMBL 2 Entrez to combine the two maps
+#kegg=lapply(en2eg,grepKEGG,eg2kegg)
+#save(kegg,file="tcga.kegg.RData")
+load("tcga.kegg.RData")
+
+#head(kegg)
+#get the genes in each category
+allGos <-getgo(rownames(limma_tt), 'hg19', 'geneSymbol',fetch.cats = c("KEGG")) # so here I pull the GO terms for every gene that is regulated.
+allGos <- stack(allGos[-which(is.na(names(allGos)))])
+#go2genes=goseq:::reversemapping(allGos)
+#go2genes <- stack(go2genes)
+allGos$Term <- with( allGos, terms$value[match(allGos$values, terms$ind)] )
+
+#
+# KEGG up
+up_KEGG=goseq(up_pwf,gene2cat=kegg)
+upreg_enriched.kegg=up_KEGG[p.adjust(up_KEGG$over_represented_pvalue,
+				method="BH")<.05,]
+#dim(upreg_enriched.kegg)
+upreg_enriched.kegg$keggID <- paste('hsa',upreg_enriched.kegg[,'category'],sep="")
+#annotate the kegg categories
+upreg_cats <- upreg_enriched.kegg$category
+
+#add the terms
+onlySigCats <- allGos[allGos$values %in% upreg_enriched.kegg$category,]
+onlySigCats$Term <- with( onlySigCats, terms$value[match(onlySigCats$values, terms$ind)] )
+
+# add the gene symbol
+upreg_enriched.kegg <- cbind(upreg_enriched.kegg,kegg_name=unlist(keggid2keggname[upreg_enriched.kegg[,'category']]))
+gene_list <- lapply(upreg_enriched.kegg$keggID,function(x){
+			paste(onlySigCats[which(onlySigCats[,'values'] %in% gsub("hsa","",x)),'ind'],collapse=",")
+		})
+upreg_enriched.kegg <- cbind(upreg_enriched.kegg,kegg_genes=unlist(gene_list))
+write.table(upreg_enriched.kegg,file=paste(outdir,'/goseq_upreg_kegg.table.txt',sep=""),sep="\t")
+
+#
+# KEGG down
+down_KEGG=goseq(downreg_pwf,gene2cat=kegg)
+downreg_enriched.kegg=up_KEGG[p.adjust(down_KEGG$over_represented_pvalue,
+				method="BH")<.05,]
+@
+
+<<results=tex,echo=FALSE>>=
+cat("\\paragraph{", paste("Number upregulated enriched in KEGG:", nrow(upreg_enriched.kegg)), "}\n\n", sep="")
+cat("\\paragraph{", paste("Number downregulated enriched in KEGG:", nrow(downreg_enriched.kegg)), "}\n\n", sep="")
+@
+
+<<echo=FALSE>>=
+if(nrow(downreg_enriched.kegg) > 0){
+	downreg_enriched.kegg$keggID <- paste('hsa',downreg_enriched.kegg[,'category'],sep="")
+	#annotate the kegg categories
+	downreg_cats <- downreg_enriched.kegg$category
+	
+	#add the terms
+	onlySigCats <- allGos[allGos$values %in% downreg_enriched.kegg$category,]
+	onlySigCats$Term <- with( onlySigCats, terms$value[match(onlySigCats$values, terms$ind)] )
+	
+	# add the gene symbol
+	downreg_enriched.kegg <- cbind(downreg_enriched.kegg,kegg_name=unlist(keggid2keggname[downreg_enriched.kegg[,'category']]))
+	gene_list <- lapply(downreg_enriched.kegg$keggID,function(x){
+				paste(onlySigCats[which(onlySigCats[,'values'] %in% gsub("hsa","",x)),'ind'],collapse=",")
+			})
+	downreg_enriched.kegg <- cbind(downreg_enriched.kegg,kegg_genes=unlist(gene_list))
+	write.table(downreg_enriched.kegg,file=paste(outdir,'/goseq_upreg_kegg.table.txt',sep=""),sep="\t")
+	colnames(downreg_enriched.kegg) <- c('cat','over','under','numDEinCat','numInCat','id','name','genes')
+}
+colnames(upreg_enriched.kegg) <- c('cat','over','under','numDEinCat','numInCat','id','name','genes')
+colnames(upreg_enriched.GO) <-c('cat','over','under','numDEinCat','numInCat','term', 'ontology')
+colnames(downreg_enriched.GO) <-c('cat','over','under','numDEinCat','numInCat','term', 'ontology')
+
+@
+
+<<echo=FALSE>>=
+upreg_bar_kegg <- upreg_enriched.kegg[,c('over','numDEinCat','name')]
+upreg_bar_kegg$over <- -log10(upreg_bar_kegg$over)
+upreg_bar_kegg$over[-which(is.finite(upreg_bar_kegg$over))] <- 0
+
+rownames(upreg_bar_kegg) <- upreg_bar_kegg$name
+upreg_my.data <- t(upreg_bar_kegg[,'over',drop=F])
+#par(las = 1, mar = c(5, 20, 4, 4) + 0.1)
+upreg_my.y.coords <- barplot(upreg_my.data, horiz = T, plot = F)
+upreg_my.x.coords <- as.numeric(upreg_my.data)
+upreg_my.x.offset <- max(upreg_my.x.coords)/100
+@
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=1\textwidth}
+<<echo=FALSE,fig=TRUE,width=7,height=10>>=
+par(las = 1, mar = c(5, 15, 4, 4) + 0.1, cex=1)
+barplot(upreg_my.data, horiz = T, xlim = c(0, max(upreg_my.x.coords)+upreg_my.x.offset + 10 * upreg_my.x.offset),
+		col="indianred",xlab="-log10(P_value)")
+for(i in 1:length(upreg_my.x.coords)){
+	#text(my.x.coords[i] + my.x.offset, my.y.coords[i], my.x.coords[i], adj = c(0, 0.5))
+	#text(0, my.y.coords[i], bar_kegg$count[i], adj = c(0, 0.5),col="grey")
+	text(0, upreg_my.y.coords[i], upreg_bar_kegg$numDEinCat[i], adj = c(0, 0.5),col="black")
+}
+@
+\caption{Goseq upreg KEGG enrichment }
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+<<echo=FALSE>>=
+go_limit <- 30 # drawing limit in barplot
+upreg_bar_go <- upreg_enriched.GO[1:go_limit,c('over','numDEinCat','term')]
+upreg_bar_go$over <- -log10(upreg_bar_go$over)
+rownames(upreg_bar_go) <- upreg_bar_go$term
+
+upreg_my.go_data <- t(upreg_bar_go[1:go_limit,'over',drop=F])
+#par(las = 1, mar = c(5, 20, 4, 4) + 0.1)
+upreg_my.y.coords <- barplot(upreg_my.go_data, horiz = T, plot = F)
+upreg_my.x.coords <- as.numeric(upreg_my.go_data)
+upreg_my.x.offset <- max(upreg_my.x.coords)/100
+@
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=1\textwidth}
+<<echo=FALSE,fig=TRUE,width=7,height=10>>=
+par(las = 1, mar = c(5, 17, 4, 4) + 0.1,cex=1)
+barplot(upreg_my.go_data, horiz = T, xlim = c(0, max(upreg_my.x.coords)+upreg_my.x.offset + 10 *
+						upreg_my.x.offset),col="steelblue", xlab="-log10(P_value)")
+for(i in 1:length(upreg_my.x.coords)){
+	#text(my.x.coords[i] + my.x.offset, my.y.coords[i], my.x.coords[i], adj = c(0, 0.5))
+	#text(0, my.y.coords[i], bar_kegg$count[i], adj = c(0, 0.5),col="grey")
+	text(0, upreg_my.y.coords[i], upreg_bar_go$numDEinCat[i], adj = c(0, 0.5),col="black")
+}
+@
+\caption{GOseq upreg GO enrichment (top30) }
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+\FloatBarrier
+
+\section{Overlap with HCK mouse experiment}
+
+\subsection{Heatmap of concordant }
+
+<<echo=FALSE>>=
+
+limma_mm10_tt <- read.csv(file="/home/NGS/rnaseq/hck/hck/all_tn_top_table.voom.0.05.bh.table.csv")
+limma_mm10_5fc_tt <- limma_mm10_tt[which(limma_mm10_tt$adj.P.Val < 0.05 & abs(limma_mm10_tt$logFC) > log2(2)),]
+@
+
+<<results=tex,echo=FALSE>>=
+cat("\\paragraph{", paste("mm10 HCK differential genes BH,FC2:",nrow(limma_mm10_tt[which(limma_mm10_tt$adj.P.Val < 0.05 & abs(limma_mm10_tt$logFC) > 1),])), "}\n\n", sep="")
+cat("\\paragraph{", paste("mm10 differential 2 fold change:",nrow(limma_mm10_5fc_tt)), "}\n\n", sep="")
+@
+
+<<echo=FALSE>>=
+# overlap datasets
+limma_mm10_5fc_tt_conc <- limma_mm10_5fc_tt[which(toupper(as.character(limma_mm10_5fc_tt[,'gene_name'])) %in%
+							toupper(unique(rownames(limma_tt.sig.fil)))),]
+limma_tt.sig.fil_conc <- limma_tt.sig.fil[which(toupper(rownames(limma_tt.sig.fil)) %in%
+								toupper(unique(as.character(limma_mm10_5fc_tt[,'gene_name'])))),]
+#concordant_hck[which(toupper(concordant_hck[,'mm10.gene_name']) == "HCK"),]
+concordant_hck <- cbind(mm10=limma_mm10_5fc_tt_conc[match(rownames(limma_tt.sig.fil_conc),toupper(as.character(limma_mm10_5fc_tt_conc[,'gene_name']))),],
+						tcga=limma_tt.sig.fil_conc)
+concordant_up_hck <- concordant_hck[which(concordant_hck$mm10.logFC >0 & concordant_hck$tcga.logFC > 0),]
+concordant_down_hck <- concordant_hck[which(concordant_hck$mm10.logFC < 0 & concordant_hck$tcga.logFC < 0),]
+@
+
+<<results=tex,echo=FALSE>>=
+cat("\\paragraph{", paste("Diff expressed across both datasets:",nrow(concordant_hck)), "}\n\n", sep="")
+cat("\\paragraph{", paste("Concordant up :",nrow(concordant_up_hck)), "}\n\n", sep="")
+cat("\\paragraph{", paste("Concordant down :",nrow(concordant_down_hck)), "}\n\n", sep="")
+@
+
+<<echo=FALSE>>=
+concordant_hck  <- rbind(concordant_up_hck,concordant_down_hck)
+write.csv(concordant_hck,file=paste(outdir,"differential_HCK_tcga_mm10.high-low.table.txt",sep=""))
+
+sample_cpm <- cpm(dge_obj.fil,normalized.lib.sizes=T,log=T)
+sample_rpkm <- sample_cpm - matrix(rep(log2(longest_tr_df[rownames(sample_cpm)]),ncol(sample_cpm)),ncol=ncol(sample_cpm),byrow=F)
+sample_rpkm <- sample_rpkm[which(rownames(sample_rpkm) %in% toupper(concordant_hck$mm10.gene_name)),]
+sample_rpkm <- sample_rpkm[-which(is.na(sample_rpkm[,1])),]
+# cluster column and truncate
+log2.rpkm.scaled <- t(scale(t(sample_rpkm)))
+log2_genes.scaled.trunc <- log2.rpkm.scaled
+log2_genes.scaled.trunc[log2_genes.scaled.trunc > 2] <- 2
+log2_genes.scaled.trunc[log2_genes.scaled.trunc < -2] <- -2
+cor.scaled <- cor(log2_genes.scaled.trunc, use = "complete.obs", method = "spearman")
+h.diana.orig <- as.hclust(diana(as.dist(1 - cor.scaled)), diss = TRUE)
+DianaArrays <- as.dendrogram(h.diana.orig)
+
+#cluster row
+rlog2.rpkm.scaled <- t(t(scale(t(sample_rpkm))))
+rlog2_genes.scaled.trunc <- rlog2.rpkm.scaled
+rlog2_genes.scaled.trunc[rlog2_genes.scaled.trunc > 2] <- 2
+rlog2_genes.scaled.trunc[rlog2_genes.scaled.trunc < -2] <- -2
+#row.cor.scaled <- cor(rlog2_genes.scaled.trunc, use = "complete.obs", method = "spearman")
+row.cor.scaled <- cor(rlog2_genes.scaled.trunc, use = "na.or.complete", method = "spearman")
+row.h.diana.orig <- as.hclust(diana(as.dist(1 - row.cor.scaled)), diss = TRUE)
+row.DianaArrays <- as.dendrogram(row.h.diana.orig)
+@
+
+<<echo=FALSE>>=
+color.map <- function(mol.biol) {
+	if (mol.biol=="High") 
+		"#FF0000" #red
+	else
+		"#0000FF" #blue
+}	
+
+hm_category <- unlist(lapply(as.character(dge_obj.fil$samples$group), color.map))
+hmcol <- colorRampPalette(c("#053061", "#2166AC", "#4393C3", "#92C5DE", "#D1E5F0", "#FDDBC7", "#F4A582", "#D6604D", "#B2182B", "#67001F"))(20)
+
+cl_heatmap_file <- 'tcga_hck_5fc_clustered_heatmap.pdf'
+pdf(cl_heatmap_file ,width=25,height=10)
+heatmap.2(as.matrix(log2_genes.scaled.trunc),
+		#col=topo.colors(100),
+		#col=redgreen(75),
+		col=hmcol,
+		distfun = dist,
+		hclustfun = hclust,
+		ColSideColors=hm_category,
+		#Colv=DianaArrays,
+		#Rowv=row.DianaArrays,
+		#Rowv=NULL,
+		#dendrogram="both",
+		scale="none",
+		symkey="FALSE",
+		density.info="none",
+		main="Concordant diff. expression b/w mm10 and TCGA",
+		keysize=.5,
+		trace="none",
+		cexRow=1,
+		margins=c(8,8),
+		key=TRUE)
+dummy_out <- dev.off()
+@
+
+\begin{figure}
+\setkeys{Gin}{width=1.0\textwidth}
+<<results=tex,echo=FALSE>>=
+cat("\\includegraphics{", cl_heatmap_file , "}\n\n", sep="")
+@
+\caption{Clustered heatmap of HCK mm10 DEGS with 5fc, with TCGA data.
+Colour bar shows high HCK in red, low HCK in blue.}
+\end{figure}
+
+\FloatBarrier
+
+\subsection{Volcano plot}
+
+\begin{figure}[H]
+\begin{center}
+\setkeys{Gin}{width=0.8\textwidth}
+<<echo=FALSE,fig=TRUE,width=5,height=5>>=
+#volcanoplot(fit2,cex=0.7)
+#png("Venn_plot_hck.png")
+plot(limma_tt$logFC, -log10(limma_tt$adj.P.Val), main="Volcano plot", 
+		xlab="log2(high_HCK/low_HCK)", ylab="-log10(FDR)", pch=20, cex=0.5)
+points(limma_tt$logFC[which(abs(limma_tt$logFC) > 1)], 
+		-log10(limma_tt$adj.P.Val[which(abs(limma_tt$logFC) > 1)]), pch = 16, cex = 0.7, col = "red")
+points(limma_tt$logFC[which(rownames(limma_tt) %in% toupper(rownames(sample_rpkm)))], 
+		-log10(limma_tt$adj.P.Val[which(rownames(limma_tt) %in% toupper(rownames(sample_rpkm)))]), 
+		pch = 16, cex = 0.7, col = "goldenrod")
+abline(v=c(1,-1),col=c('darkgrey','darkgrey'))
+legend("topleft",c('Gene in TCGA','TCGA DEG > 1fc','TCGA DEG >1 FC & mm10 HCK DEG >5fc'),pch=20,col=c('black','red','yellow'))
+#dev.off()
+@
+\caption{Volcano plot}
+\label{fig:lm}
+\end{center}
+\end{figure}
+
+<<echo=FALSE>>=
+write.csv(limma_mm10_5fc_tt,file=paste(outdir,"mm10_5fc.table.csv",sep=""))
+@
+
+\FloatBarrier
+
+\section{Tables}
+
+\begin{center}
+<<label=tab2,echo=FALSE,results=tex>>=
+rownames(upreg_enriched.kegg) <- upreg_enriched.kegg[,'id']
+data_xtable <- xtable(upreg_enriched.kegg[,-c(1,6,8)], digits=c(0,-2,-2,0,0,0),
+		caption = "KEGG enrichment",  label = "tab:two")
+#align(data_xtable) <- 'rlp{1cm}p{3cm}ccccc' #rep("r",ncol(data_proc)+1)
+align(data_xtable) <- 'rp{2cm}p{2cm}p{2cm}p{2cm}p{3cm}' #rep("r",ncol(data_proc)+1)
+print(data_xtable,caption.placement = "top",
+		tabular.environment="longtable",floating=FALSE)
+@
+
+<<label=tab2,echo=FALSE,results=tex>>=
+rownames(upreg_enriched.GO) <- upreg_enriched.GO[,'cat']
+data_xtable <- xtable(upreg_enriched.GO[,-1], digits=c(0,-2,-2,0,0,0,0),caption = "GO Enrichment",  label = "tab:one")
+#align(data_xtable) <- 'rlp{1cm}p{3cm}ccccc' #rep("r",ncol(data_proc)+1)
+align(data_xtable) <- 'lp{2cm}p{2cm}p{2cm}p{2cm}p{2cm}p{2cm}' #rep("r",ncol(data_proc)+1)
+print(data_xtable, table.placement = "H",	caption.placement = "top",
+		tabular.environment="longtable",floating=FALSE)
+@
+
+<<label=tab2,echo=FALSE,results=tex>>=
+rownames(downreg_enriched.GO) <- downreg_enriched.GO[,'cat']
+data_xtable <- xtable(downreg_enriched.GO[,-1], digits=c(0,-2,-2,0,0,0,0),caption = "GO Enrichment",  label = "tab:one")
+#align(data_xtable) <- 'rlp{1cm}p{3cm}ccccc' #rep("r",ncol(data_proc)+1)
+align(data_xtable) <- 'lp{2cm}p{2cm}p{2cm}p{2cm}p{2cm}p{2cm}' #rep("r",ncol(data_proc)+1)
+print(data_xtable, table.placement = "H",	caption.placement = "top",
+		tabular.environment="longtable",floating=FALSE)
+@
+
+
+<<label=tab1,echo=FALSE,results=tex>>=
+print(xtable(limma_tt.sig.fil[,c('logFC','CI.L','CI.R','adj.P.Val')], 
+				caption = "Significant Differential genes > 2 fold change", 
+				label = "tab:one"), table.placement = "H",	
+				caption.placement = "top",
+				tabular.environment='longtable',
+				floating=FALSE)
+@
+\end{center}
+
+\newPage{}
+
+\section{Session Info}
+
+<<echo=FALSE>>=
+sessionInfo()
+@
+
+\end{document}
